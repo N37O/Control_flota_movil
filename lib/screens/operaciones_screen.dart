@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -6,9 +7,10 @@ import '../services/api_service.dart';
 import 'common_widgets.dart';
 
 class OperacionesScreen extends StatefulWidget {
-  const OperacionesScreen({required this.api, super.key});
+  const OperacionesScreen({required this.api, this.isActive = true, super.key});
 
   final ApiService api;
+  final bool isActive;
 
   @override
   State<OperacionesScreen> createState() => _OperacionesScreenState();
@@ -26,6 +28,14 @@ class _OperacionesScreenState extends State<OperacionesScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant OperacionesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      unawaited(_load());
+    }
   }
 
   Future<void> _load() async {
@@ -116,6 +126,7 @@ class _OperacionesScreenState extends State<OperacionesScreen> {
                 _RegisterMovementForm(
                   api: widget.api,
                   trips: _trips,
+                  units: _units,
                   onSaved: () =>
                       _showSaved('Movimiento registrado correctamente.'),
                 ),
@@ -542,11 +553,13 @@ class _RegisterMovementForm extends StatefulWidget {
   const _RegisterMovementForm({
     required this.api,
     required this.trips,
+    required this.units,
     required this.onSaved,
   });
 
   final ApiService api;
   final List<Map<String, dynamic>> trips;
+  final List<Map<String, dynamic>> units;
   final VoidCallback onSaved;
 
   @override
@@ -555,11 +568,13 @@ class _RegisterMovementForm extends StatefulWidget {
 
 class _RegisterMovementFormState extends State<_RegisterMovementForm> {
   final _formKey = GlobalKey<FormState>();
+  final _correlativo = TextEditingController();
+  final _correlativoFocus = FocusNode();
   final _odometer = TextEditingController();
   final _fuel = TextEditingController();
   final _notes = TextEditingController();
   String _type = 'SALIDA';
-  int? _tripId;
+  int? _selectedTripId;
   bool _saving = false;
   String? _error;
 
@@ -569,12 +584,24 @@ class _RegisterMovementFormState extends State<_RegisterMovementForm> {
         (_type == 'SALIDA' ? status == 1 : status == 2);
   }).toList();
 
-  Map<String, dynamic>? get _selectedTrip => widget.trips
-      .where((trip) => readInt(trip['id_viaje']) == _tripId)
+  Map<String, dynamic>? get _selectedTrip => _availableTrips
+      .where((trip) => readInt(trip['id_viaje']) == _selectedTripId)
       .firstOrNull;
+
+  Map<String, dynamic>? _unitForTrip(Map<String, dynamic> trip) => widget.units
+      .where((unit) => readInt(unit['id_unidad']) == readInt(trip['id_unidad']))
+      .firstOrNull;
+
+  void _prefillUnitReadings(Map<String, dynamic> trip) {
+    final unit = _unitForTrip(trip);
+    _odometer.text = unit?['odometro_actual']?.toString() ?? '';
+    _fuel.text = unit?['combustible_actual_gal']?.toString() ?? '';
+  }
 
   @override
   void dispose() {
+    _correlativo.dispose();
+    _correlativoFocus.dispose();
     _odometer.dispose();
     _fuel.dispose();
     _notes.dispose();
@@ -585,7 +612,7 @@ class _RegisterMovementFormState extends State<_RegisterMovementForm> {
     if (!_formKey.currentState!.validate()) return;
     final trip = _selectedTrip;
     if (trip == null) {
-      setState(() => _error = 'Selecciona un viaje válido.');
+      setState(() => _error = 'Ingresa el correlativo de un viaje disponible.');
       return;
     }
     final locationId = readInt(
@@ -602,7 +629,7 @@ class _RegisterMovementFormState extends State<_RegisterMovementForm> {
     });
     try {
       await widget.api.post('viajes/movimientos/', {
-        'id_viaje': _tripId,
+        'id_viaje': readInt(trip['id_viaje']),
         'id_unidad': readInt(trip['id_unidad']),
         'id_ubicacion': locationId,
         'tipo': _type,
@@ -612,11 +639,12 @@ class _RegisterMovementFormState extends State<_RegisterMovementForm> {
       });
       if (!mounted) return;
       _formKey.currentState!.reset();
+      _correlativo.clear();
       _odometer.clear();
       _fuel.clear();
       _notes.clear();
       setState(() {
-        _tripId = null;
+        _selectedTripId = null;
         _saving = false;
       });
       widget.onSaved();
@@ -670,37 +698,114 @@ class _RegisterMovementFormState extends State<_RegisterMovementForm> {
                   selected: {_type},
                   onSelectionChanged: (selection) => setState(() {
                     _type = selection.first;
-                    _tripId = null;
+                    _selectedTripId = null;
+                    _correlativo.clear();
+                    _odometer.clear();
+                    _fuel.clear();
                     _error = null;
                   }),
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  initialValue: _tripId,
-                  decoration: const InputDecoration(labelText: 'Viaje *'),
-                  items: _availableTrips
-                      .map(
-                        (trip) => DropdownMenuItem(
-                          value: readInt(trip['id_viaje']),
-                          child: Text(
-                            '${trip['correlativo'] ?? 'Viaje'} · ${trip['unidad_placa'] ?? 'Unidad'}',
-                          ),
+                RawAutocomplete<Map<String, dynamic>>(
+                  textEditingController: _correlativo,
+                  focusNode: _correlativoFocus,
+                  displayStringForOption: (trip) =>
+                      trip['correlativo']?.toString() ?? '',
+                  optionsBuilder: (value) {
+                    final query = value.text.trim().toLowerCase();
+                    if (query.isEmpty) return const [];
+                    return _availableTrips.where(
+                      (trip) => (trip['correlativo']?.toString() ?? '')
+                          .toLowerCase()
+                          .contains(query),
+                    );
+                  },
+                  onSelected: (trip) => setState(() {
+                    _selectedTripId = readInt(trip['id_viaje']);
+                    _prefillUnitReadings(trip);
+                    _error = null;
+                  }),
+                  fieldViewBuilder:
+                      (
+                        context,
+                        controller,
+                        focusNode,
+                        onFieldSubmitted,
+                      ) => TextFormField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: InputDecoration(
+                          labelText: 'Buscar correlativo del viaje *',
+                          hintText: 'Ej. V-005',
+                          helperText: _type == 'SALIDA'
+                              ? 'Busca entre los viajes programados.'
+                              : 'Busca entre los viajes en curso.',
                         ),
-                      )
-                      .toList(),
-                  onChanged: (value) => setState(() => _tripId = value),
-                  validator: (value) => value == null
-                      ? _type == 'SALIDA'
-                            ? 'Selecciona un viaje programado.'
-                            : 'Selecciona un viaje en curso.'
-                      : null,
+                        onChanged: (_) => setState(() {
+                          _selectedTripId = null;
+                          _odometer.clear();
+                          _fuel.clear();
+                          _error = null;
+                        }),
+                        onFieldSubmitted: (_) => onFieldSubmitted(),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Ingresa el correlativo del viaje.';
+                          }
+                          return _selectedTrip == null
+                              ? _type == 'SALIDA'
+                                    ? 'Selecciona un viaje programado de la lista.'
+                                    : 'Selecciona un viaje en curso de la lista.'
+                              : null;
+                        },
+                      ),
+                  optionsViewBuilder: (context, onSelected, options) => Align(
+                    alignment: Alignment.topLeft,
+                    child: Material(
+                      elevation: 4,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 220),
+                        child: ListView(
+                          padding: EdgeInsets.zero,
+                          shrinkWrap: true,
+                          children: options
+                              .map(
+                                (trip) => ListTile(
+                                  title: Text(
+                                    trip['correlativo']?.toString() ?? 'Viaje',
+                                  ),
+                                  subtitle: Text(
+                                    '${trip['unidad_placa'] ?? 'Unidad'} · '
+                                    '${trip['origen_nombre'] ?? 'Origen'} → '
+                                    '${trip['destino_nombre'] ?? 'Destino'}',
+                                  ),
+                                  onTap: () => onSelected(trip),
+                                ),
+                              )
+                              .toList(),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 if (_selectedTrip != null) ...[
                   const SizedBox(height: 8),
                   Text(
+                    'Unidad: ${_selectedTrip!['unidad_placa'] ?? '—'} · '
+                    'Conductor: ${_selectedTrip!['conductor_nombre'] ?? '—'}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Ruta: ${_selectedTrip!['origen_nombre'] ?? 'Origen'} → '
+                    '${_selectedTrip!['destino_nombre'] ?? 'Destino'}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  Text(
                     _type == 'SALIDA'
-                        ? 'Lugar de salida: ${_selectedTrip!['origen_nombre'] ?? 'Origen del viaje'}'
-                        : 'Lugar de llegada: ${_selectedTrip!['destino_nombre'] ?? 'Destino del viaje'}',
+                        ? 'Se registrará en: ${_selectedTrip!['origen_nombre'] ?? 'Origen del viaje'}'
+                        : 'Se registrará en: ${_selectedTrip!['destino_nombre'] ?? 'Destino del viaje'}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -710,6 +815,7 @@ class _RegisterMovementFormState extends State<_RegisterMovementForm> {
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
                     labelText: 'Odómetro (km) *',
+                    helperText: 'Se carga la última lectura de la unidad.',
                   ),
                   validator: (value) {
                     final number = int.tryParse(value?.trim() ?? '');
@@ -726,6 +832,7 @@ class _RegisterMovementFormState extends State<_RegisterMovementForm> {
                   ),
                   decoration: const InputDecoration(
                     labelText: 'Combustible en el tanque (gal) *',
+                    helperText: 'Se carga la última lectura de la unidad.',
                   ),
                   validator: (value) {
                     final number = double.tryParse(value?.trim() ?? '');

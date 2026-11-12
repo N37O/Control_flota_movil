@@ -101,7 +101,13 @@ class _HomeShellState extends State<HomeShell> {
       ),
     );
     if (permissions.canRegisterLoads) {
-      pages.add(OperacionesScreen(api: widget.api));
+      final operationsIndex = pages.length;
+      pages.add(
+        OperacionesScreen(
+          api: widget.api,
+          isActive: _selectedIndex == operationsIndex,
+        ),
+      );
       pageTitles.add('Operaciones');
       destinations.add(
         const NavigationDestination(

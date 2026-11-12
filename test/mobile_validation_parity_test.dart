@@ -193,6 +193,40 @@ void main() {
     );
   });
 
+  testWidgets('new unit displays no reading and requires first tank level', (
+    tester,
+  ) async {
+    final api = _api();
+    addTearDown(api.dispose);
+    await tester.pumpWidget(
+      MaterialApp(home: UnidadesScreen(api: api, isAdmin: true)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sin lectura'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    await tester.tap(find.text('Recarga'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('TEST-001').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nivel final del tanque (gal) *'), findsOneWidget);
+    await tester.enterText(find.byType(TextFormField).at(0), '20');
+    await tester.enterText(find.byType(TextFormField).at(2), '4.50');
+    await tester.tap(find.text('Guardar'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'La primera recarga requiere indicar el nivel final real del tanque.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('refuel cannot exceed the remaining tank capacity', (
     tester,
   ) async {

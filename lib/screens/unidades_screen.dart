@@ -441,23 +441,29 @@ class _UnitCard extends StatelessWidget {
               'Carga: ${unit['capacidad_ton'] ?? '—'} t · Tanque: ${unit['capacidad_tanque_gal'] ?? '—'} gal',
               style: TextStyle(color: Colors.blueGrey.shade700, fontSize: 12),
             ),
-            if (fuelRatio != null) ...[
+            if (capacity != null && capacity > 0) ...[
               const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
                     child: LinearProgressIndicator(
-                      value: fuelRatio,
+                      value: fuelRatio ?? 0,
                       minHeight: 8,
                       borderRadius: BorderRadius.circular(8),
-                      color: fuelRatio < .2
+                      color: fuelRatio == null
+                          ? const Color(0xFF8794A5)
+                          : fuelRatio < .2
                           ? const Color(0xFFCA3D3D)
                           : const Color(0xFF087E8B),
                       backgroundColor: const Color(0xFFE8EDF3),
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Text('${displayedFuel!.toStringAsFixed(1)} gal'),
+                  Text(
+                    displayedFuel == null
+                        ? 'Sin lectura'
+                        : '${displayedFuel.toStringAsFixed(1)} gal',
+                  ),
                 ],
               ),
             ],
@@ -876,7 +882,11 @@ class _RefuelDialogState extends State<_RefuelDialog> {
   }
 
   String? _validateTankLevel(String? value) {
-    if ((value ?? '').trim().isEmpty) return null;
+    if ((value ?? '').trim().isEmpty) {
+      return _currentTankLevel == null
+          ? 'La primera recarga requiere indicar el nivel final real del tanque.'
+          : null;
+    }
     final error = _positive(value, decimalPlaces: 2, maximum: _tankCapacity);
     if (error != null) {
       if (_tankCapacity == null || _tankCapacity! <= 0) {
@@ -1112,10 +1122,16 @@ class _RefuelDialogState extends State<_RefuelDialog> {
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
-                decoration: const InputDecoration(
-                  labelText: 'Nivel final del tanque (gal, opcional)',
+                decoration: InputDecoration(
+                  labelText: _currentTankLevel == null
+                      ? 'Nivel final del tanque (gal) *'
+                      : 'Nivel final del tanque (gal, opcional)',
+                  helperText: _currentTankLevel == null
+                      ? 'Necesario para registrar la primera lectura de combustible.'
+                      : null,
                 ),
                 validator: _validateTankLevel,
+                onChanged: (_) => _formKey.currentState?.validate(),
               ),
               const SizedBox(height: 12),
               TextFormField(
